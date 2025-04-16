@@ -63,9 +63,6 @@ Titles: ${JSON.stringify(titles)}
     prompt,
   });
 
-  log.info("Raw AI response:");
-  // console.log(text);
-
   const cleanedText = text.replace(/^```json\s*|```$/g, "").trim();
   const result = JSON.parse(cleanedText);
 
