@@ -84,7 +84,7 @@ Titles: ${JSON.stringify(titles)}
     }
 
     const filtered = entry.categories.filter(
-      (c) => typeof c === "string" && allowedCategories.includes(c)
+      (c: any) => typeof c === "string" && allowedCategories.includes(c)
     );
 
     if (filtered.length > 0) {
