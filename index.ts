@@ -9,6 +9,7 @@ import {
   text,
   isCancel,
   cancel,
+  multiselect,
 } from "npm:@clack/prompts";
 import { XMLParser, XMLBuilder } from "npm:fast-xml-parser@latest";
 
@@ -108,14 +109,17 @@ function chunk<T>(arr: T[], size: number): T[][] {
  * based on the post title. Finally, the function rebuilds the XML and writes it to a new file.
  *
  * @param inputPath - The path to the input WordPress XML export file.
- * @param outputPath - The path to save the updated XML file.
+ * @param xmlOutputPath - The path to save the updated XML file.
+ * @param csvOutputPath - The path to save the updated CSV file.
+ * @param allowedCategories - The list of allowed categories for categorization.
  */
 async function processXML(
   inputPath: string,
-  outputPath: string,
+  xmlOutputPath: string,
+  csvOutputPath: string,
   allowedCategories: string[]
 ): Promise<void> {
-  const seenTitles = new Set<string>();
+  const seenIds = new Set<string>();
 
   // Read the input XML file.
   const xmlData = await Deno.readTextFile(inputPath);
@@ -148,7 +152,7 @@ async function processXML(
 
   while (uncategorizedPosts.length > 0) {
     const batch = uncategorizedPosts
-      .filter((p) => !seenTitles.has(p["wp:post_name"]))
+      .filter((p) => !seenIds.has(p["wp:post_id"]))
       .slice(0, 50);
     const s = spinner();
     s.start(`Categorizing batch of ${batch.length} titles...`);
@@ -159,7 +163,7 @@ async function processXML(
     for (let i = uncategorizedPosts.length - 1; i >= 0; i--) {
       const post = uncategorizedPosts[i];
       const title = post.title;
-      const name = post["wp:post_name"];
+      const id = post["wp:post_id"];
       const normalized = normalizeTitle(title);
       const matchedCategories = Object.entries(mapping).find(
         ([mappedTitle]) => normalizeTitle(mappedTitle) === normalized
@@ -173,8 +177,12 @@ async function processXML(
             .map((word) => word[0].toUpperCase() + word.slice(1))
             .join(" "),
         }));
-        log.step(`Assigned categories ${matchedCategories.join(", ")} to post "${title}"`);
-        seenTitles.add(name);
+        log.step(
+          `Assigned categories ${matchedCategories.join(
+            ", "
+          )} to post "${title}"`
+        );
+        seenIds.add(id);
         uncategorizedPosts.splice(i, 1);
       }
     }
@@ -187,17 +195,34 @@ async function processXML(
     }
   }
 
-  // Rebuild the updated XML.
-  const builder = new XMLBuilder({
-    ignoreAttributes: false,
-    format: true,
-  });
-  const newXML = builder.build(jsonObj);
+  if (xmlOutputPath) {
+    const builder = new XMLBuilder({
+      ignoreAttributes: false,
+      format: true,
+    });
+    const newXML = builder.build(jsonObj);
+    await Deno.writeTextFile(xmlOutputPath, newXML);
+    log.success(`Updated XML file written to: ${xmlOutputPath}`);
+  }
 
-  // Write the updated XML to the designated output file.
-  await Deno.writeTextFile(outputPath, newXML);
-  console.log(`Updated XML file written to: ${outputPath}`);
-  outro("All done!");
+  if (csvOutputPath) {
+    const lines = ["post id,post title,categories"];
+    const categorizedPosts = posts.filter((post) =>
+      Array.isArray(post.category)
+    );
+
+    for (const post of categorizedPosts) {
+      const id = post["wp:post_id"];
+      const title = post.title;
+      const categories = post.category.map((c) => c["@_nicename"]).join("|");
+      lines.push(`"${id}","${title.replace(/"/g, '""')}","${categories}"`);
+    }
+
+    await Deno.writeTextFile(csvOutputPath, lines.join("\n"));
+    log.success(`CSV file written to: ${csvOutputPath}`);
+  }
+
+  log.success("All done!");
 }
 
 async function main() {
@@ -218,20 +243,58 @@ async function main() {
 
   const inputPath = input.trim().replace(/^['"]|['"]$/g, "");
 
-  const output = await text({
-    message: "Enter output file path (or leave blank for default):",
-    placeholder: `${inputPath}.out.xml`,
+  const formatSelection = await multiselect({
+    message: "Select export formats:",
+    options: [
+      { value: "xml", label: "XML" },
+      { value: "csv", label: "CSV" },
+    ],
+    required: true,
   });
 
-  if (isCancel(output)) {
+  if (isCancel(formatSelection)) {
     cancel("Operation cancelled.");
     Deno.exit(0);
   }
 
-  const outputPath =
-    output.trim() === ""
-      ? `${inputPath}.out.xml`
-      : output.trim().replace(/^['"]|['"]$/g, "");
+  const exportXML = formatSelection.includes("xml");
+  const exportCSV = formatSelection.includes("csv");
+
+  let xmlOutputPath = "";
+  if (exportXML) {
+    const output = await text({
+      message: "Enter XML output file path (or leave blank for default):",
+      placeholder: `${inputPath}.out.xml`,
+    });
+
+    if (isCancel(output)) {
+      cancel("Operation cancelled.");
+      Deno.exit(0);
+    }
+
+    xmlOutputPath =
+      output.trim() === ""
+        ? `${inputPath}.out.xml`
+        : output.trim().replace(/^['"]|['"]$/g, "");
+  }
+
+  let csvOutputPath = "";
+  if (exportCSV) {
+    const csvOut = await text({
+      message: "Enter CSV output file path (or leave blank for default):",
+      placeholder: `${inputPath}.out.csv`,
+    });
+
+    if (isCancel(csvOut)) {
+      cancel("Operation cancelled.");
+      Deno.exit(0);
+    }
+
+    csvOutputPath =
+      csvOut.trim() === ""
+        ? `${inputPath}.out.csv`
+        : csvOut.trim().replace(/^['"]|['"]$/g, "");
+  }
 
   const rawCategories = await text({
     message: "Enter the allowed categories (comma-separated slugs):",
@@ -254,7 +317,12 @@ async function main() {
     .filter(Boolean);
 
   try {
-    await processXML(inputPath, outputPath, allowedCategories);
+    await processXML(
+      inputPath,
+      exportXML ? xmlOutputPath : "",
+      exportCSV ? csvOutputPath : "",
+      allowedCategories
+    );
   } catch (err) {
     log.error("Something went wrong:");
     console.error(err);
