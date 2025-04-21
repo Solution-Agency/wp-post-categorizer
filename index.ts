@@ -231,8 +231,15 @@ async function main() {
   const input = await text({
     message: "Enter the path to the WordPress XML export file:",
     placeholder: "export.xml",
-    validate(value) {
-      return value.trim() === "" ? "A file path is required." : undefined;
+    validate(value: string) {
+      const trimmed = value.trim();
+      if (trimmed === "") return "A file path is required.";
+      try {
+        const stat = Deno.statSync(trimmed.replace(/^['"]|['"]$/g, ""));
+        if (!stat.isFile) return "Provided path is not a file.";
+      } catch {
+        return "File not found.";
+      }
     },
   });
 
@@ -264,7 +271,7 @@ async function main() {
   if (exportXML) {
     const output = await text({
       message: "Enter XML output file path (or leave blank for default):",
-      placeholder: `${inputPath}.out.xml`,
+      placeholder: `${inputPath.replace(".xml", "")}.out.xml`,
     });
 
     if (isCancel(output)) {
@@ -282,7 +289,7 @@ async function main() {
   if (exportCSV) {
     const csvOut = await text({
       message: "Enter CSV output file path (or leave blank for default):",
-      placeholder: `${inputPath}.out.csv`,
+      placeholder: `${inputPath.replace(".xml", "")}.out.csv`,
     });
 
     if (isCancel(csvOut)) {
