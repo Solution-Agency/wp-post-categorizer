@@ -206,7 +206,7 @@ async function processXML(
   }
 
   if (csvOutputPath) {
-    const lines = ["post id,post title,categories"];
+    const lines = ["post id,post title,categories,link"];
     const categorizedPosts = posts.filter((post) =>
       Array.isArray(post.category)
     );
@@ -214,10 +214,13 @@ async function processXML(
     for (const post of categorizedPosts) {
       const id = post["wp:post_id"];
       const title = post.title;
+      const link = post.link;
       const categories = post.category
         .map((c: Record<string, string>) => c["@_nicename"])
         .join("|");
-      lines.push(`"${id}","${title.replace(/"/g, '""')}","${categories}"`);
+      lines.push(
+        `"${id}","${title.replace(/"/g, '""')}","${categories}", ${link}`
+      );
     }
 
     await Deno.writeTextFile(csvOutputPath, lines.join("\n"));
