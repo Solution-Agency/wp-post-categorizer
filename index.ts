@@ -214,7 +214,9 @@ async function processXML(
     for (const post of categorizedPosts) {
       const id = post["wp:post_id"];
       const title = post.title;
-      const categories = post.category.map((c) => c["@_nicename"]).join("|");
+      const categories = post.category
+        .map((c: Record<string, string>) => c["@_nicename"])
+        .join("|");
       lines.push(`"${id}","${title.replace(/"/g, '""')}","${categories}"`);
     }
 
