@@ -65,8 +65,14 @@ Titles: ${JSON.stringify(titles)}
   });
 
   const cleanedText = text.replace(/^```json\s*|```$/g, "").trim();
-  const result = JSON.parse(cleanedText);
-
+  let result: any;
+  try {
+    result = JSON.parse(cleanedText);
+    console.log({ result });
+  } catch (err) {
+    console.error(cleanedText);
+    throw new Error(`Failed to parse JSON: ${err.message}`);
+  }
   if (!Array.isArray(result)) {
     throw new Error("AI response is not an array.");
   }
@@ -145,25 +151,41 @@ async function processXML(
 
   // Process each post: use the title for AI categorization.
   const uncategorizedPosts = posts.filter(
-    (p) => typeof p.title === "string" && p["wp:post_type"] === "post"
+    (p) =>
+      typeof p.title === "string" &&
+      p["wp:post_type"] === "post" &&
+      p.title !== ""
   );
 
-  // console.log({ uncategorizedPosts });
-
   while (uncategorizedPosts.length > 0) {
-    const batch = uncategorizedPosts
-      .filter((p) => !seenIds.has(p["wp:post_id"]))
-      .slice(0, 50);
+    const batch = uncategorizedPosts.slice(0, 50);
     const s = spinner();
+
+    if (!batch.length) break; // We are out
+
     s.start(`Categorizing batch of ${batch.length} titles...`);
     const titleList = batch.map((p) => p.title);
     const mapping = await categorizeTitlesInBatch(titleList, allowedCategories);
-    s.stop(`Categorized batch.`);
 
-    for (let i = uncategorizedPosts.length - 1; i >= 0; i--) {
+    // Skip batch entirely if mapping returned nothing useful
+    const mappedTitles = Object.keys(mapping);
+    if (mappedTitles.length === 0) {
+      for (const post of batch) {
+        const id = post["wp:post_id"];
+        seenIds.add(id);
+      }
+      uncategorizedPosts.splice(0, batch.length);
+      continue;
+    }
+
+    const remaining = uncategorizedPosts.length;
+    s.stop(`Categorized batch. Remaining: ${uncategorizedPosts.length}`);
+
+    for (let i = remaining - 1; i >= 0; i--) {
       const post = uncategorizedPosts[i];
       const title = post.title;
       const id = post["wp:post_id"];
+      if (seenIds.has(id)) continue;
       const normalized = normalizeTitle(title);
       const matchedCategories = Object.entries(mapping).find(
         ([mappedTitle]) => normalizeTitle(mappedTitle) === normalized
@@ -186,13 +208,8 @@ async function processXML(
         uncategorizedPosts.splice(i, 1);
       }
     }
-
-    // Requeue unmatched titles
-    for (const p of batch) {
-      if (!mapping[p.title]) {
-        uncategorizedPosts.push(p);
-      }
-    }
+    // Show remaining uncategorized posts after processing this batch.
+    s.stop(`Categorized batch. Remaining: ${uncategorizedPosts.length}`);
   }
 
   if (xmlOutputPath) {
